@@ -1,0 +1,138 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="geometry_file" value="$(find elfin_mobile_manipulator)/config/base_geometry.yaml" />
+  <xacro:property name="chassis" value="${xacro.load_yaml(geometry_file)}" />
+  <xacro:property name="wheel_mass" value="2.0" />
+  <xacro:property name="knuckle_mass" value="0.4" />
+
+  <xacro:macro name="swerve_module" params="corner x y">
+    <link name="${corner}_knuckle">
+      <inertial>
+        <mass value="${knuckle_mass}" />
+        <inertia ixx="0.001" iyy="0.001" izz="0.001" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+    </link>
+    <joint name="${corner}_steering_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="${corner}_knuckle" />
+      <origin xyz="${x} ${y} ${chassis.wheel_radius}" />
+      <axis xyz="0 0 1" />
+      <limit effort="35" velocity="3.0" />
+      <dynamics damping="0.5" />
+    </joint>
+
+    <link name="${corner}_wheel">
+      <visual>
+        <origin rpy="${pi / 2} 0 0" />
+        <geometry><cylinder radius="${chassis.wheel_radius}" length="${chassis.wheel_width}" /></geometry>
+        <material name="mobile_tire"><color rgba="0.07 0.09 0.10 1" /></material>
+      </visual>
+      <visual>
+        <origin rpy="${pi / 2} 0 0" />
+        <geometry><cylinder radius="0.058" length="${chassis.wheel_width + 0.004}" /></geometry>
+        <material name="mobile_rim"><color rgba="0.46 0.52 0.57 1" /></material>
+      </visual>
+      <collision>
+        <!-- A centered tire contact avoids locking the steering against a flat tread. -->
+        <geometry><sphere radius="${chassis.wheel_radius}" /></geometry>
+      </collision>
+      <inertial>
+        <mass value="${wheel_mass}" />
+        <xacro:property name="radial_inertia"
+                        value="${wheel_mass * (3 * chassis.wheel_radius**2 + chassis.wheel_width**2) / 12}" />
+        <inertia ixx="${radial_inertia}" iyy="${wheel_mass * chassis.wheel_radius**2 / 2}"
+                 izz="${radial_inertia}" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+    </link>
+    <joint name="${corner}_wheel_joint" type="continuous">
+      <parent link="${corner}_knuckle" />
+      <child link="${corner}_wheel" />
+      <axis xyz="0 1 0" />
+      <limit effort="30" velocity="9.0" />
+      <dynamics damping="0.1" />
+    </joint>
+    <gazebo reference="${corner}_wheel">
+      <material>Gazebo/Black</material>
+      <mu1>1.1</mu1>
+      <mu2>1.1</mu2>
+      <kp>1000000</kp>
+      <kd>80</kd>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="swerve_interfaces" params="corner">
+    <joint name="${corner}_steering_joint">
+      <param name="pos_kp">24.0</param>
+      <param name="pos_kd">0.55</param>
+      <command_interface name="position_pid" />
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity" />
+    </joint>
+    <joint name="${corner}_wheel_joint">
+      <param name="vel_kp">2.5</param>
+      <command_interface name="velocity_pid" />
+      <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+      <state_interface name="velocity" />
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="ranger_mini_base">
+    <link name="base_link">
+      <inertial>
+        <xacro:property name="body_mass" value="${chassis.mass - 4 * (wheel_mass + knuckle_mass)}" />
+        <origin xyz="0 0 0.18" />
+        <mass value="${body_mass}" />
+        <inertia ixx="${body_mass * (chassis.width**2 + 0.24**2) / 12}"
+                 iyy="${body_mass * (chassis.length**2 + 0.24**2) / 12}"
+                 izz="${body_mass * (chassis.length**2 + chassis.width**2) / 12}"
+                 ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <visual name="upper_chassis">
+        <origin xyz="0 0 ${chassis.deck_height - 0.055}" />
+        <geometry><box size="${chassis.length} ${chassis.width} 0.11" /></geometry>
+        <material name="chassis_shell"><color rgba="0.20 0.33 0.40 1" /></material>
+      </visual>
+      <collision name="upper_chassis">
+        <origin xyz="0 0 ${chassis.deck_height - 0.055}" />
+        <geometry><box size="${chassis.length} ${chassis.width} 0.11" /></geometry>
+      </collision>
+      <visual name="underbody">
+        <origin xyz="0 0 ${chassis.deck_height - 0.17}" />
+        <geometry><box size="0.26 0.38 0.12" /></geometry>
+        <material name="chassis_underbody"><color rgba="0.12 0.14 0.16 1" /></material>
+      </visual>
+      <collision name="underbody">
+        <origin xyz="0 0 ${chassis.deck_height - 0.17}" />
+        <geometry><box size="0.26 0.38 0.12" /></geometry>
+      </collision>
+    </link>
+    <link name="arm_mount_link" />
+    <joint name="arm_mount_fixed" type="fixed">
+      <parent link="base_link" />
+      <child link="arm_mount_link" />
+      <origin xyz="0 0 ${chassis.deck_height}" />
+    </joint>
+
+    <xacro:swerve_module corner="front_left" x="${chassis.wheelbase / 2}" y="${chassis.track / 2}" />
+    <xacro:swerve_module corner="front_right" x="${chassis.wheelbase / 2}" y="${-chassis.track / 2}" />
+    <xacro:swerve_module corner="rear_left" x="${-chassis.wheelbase / 2}" y="${chassis.track / 2}" />
+    <xacro:swerve_module corner="rear_right" x="${-chassis.wheelbase / 2}" y="${-chassis.track / 2}" />
+
+    <ros2_control name="MobileChassis" type="system">
+      <hardware><plugin>gazebo_ros2_control/GazeboSystem</plugin></hardware>
+      <xacro:swerve_interfaces corner="front_left" />
+      <xacro:swerve_interfaces corner="front_right" />
+      <xacro:swerve_interfaces corner="rear_left" />
+      <xacro:swerve_interfaces corner="rear_right" />
+    </ros2_control>
+
+    <gazebo>
+      <plugin name="chassis_ground_truth" filename="libgazebo_ros_p3d.so">
+        <ros><remapping>odom:=/simulation/ground_truth</remapping></ros>
+        <body_name>base_link</body_name>
+        <frame_name>world</frame_name>
+        <update_rate>30.0</update_rate>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+</robot>

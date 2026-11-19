@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="imu_white_noise" params="stddev">
+    <noise type="gaussian">
+      <mean>0</mean>
+      <stddev>${stddev}</stddev>
+    </noise>
+  </xacro:macro>
+
+  <xacro:macro name="chassis_imu" params="parent">
+    <!-- Rigidly mounted inside the chassis, with the sensor axes aligned to the body. -->
+    <joint name="chassis_imu_fixed" type="fixed">
+      <parent link="${parent}" />
+      <child link="imu_link" />
+      <origin xyz="0 0 0.18" rpy="0 0 0" />
+    </joint>
+    <link name="imu_link">
+      <inertial>
+        <mass value="0.025" />
+        <inertia ixx="0.0000022" iyy="0.0000036" izz="0.0000052" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <visual>
+        <geometry><box size="0.04 0.03 0.012" /></geometry>
+        <material name="imu_housing"><color rgba="0.13 0.25 0.20 1" /></material>
+      </visual>
+    </link>
+
+    <gazebo reference="imu_link">
+      <sensor name="chassis_imu" type="imu">
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <imu>
+          <!-- Generic sensor noise in rad/s and m/s^2, per axis. -->
+          <angular_velocity>
+            <x><xacro:imu_white_noise stddev="0.003" /></x>
+            <y><xacro:imu_white_noise stddev="0.003" /></y>
+            <z><xacro:imu_white_noise stddev="0.003" /></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><xacro:imu_white_noise stddev="0.025" /></x>
+            <y><xacro:imu_white_noise stddev="0.025" /></y>
+            <z><xacro:imu_white_noise stddev="0.025" /></z>
+          </linear_acceleration>
+        </imu>
+        <plugin name="chassis_imu_driver" filename="libgazebo_ros_imu_sensor.so">
+          <ros><remapping>~/out:=/simulation/chassis_imu</remapping></ros>
+          <frame_name>imu_link</frame_name>
+          <initial_orientation_as_reference>false</initial_orientation_as_reference>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+</robot>

@@ -1,0 +1,186 @@
+#!/usr/bin/python3
+"""Control a simulated four-wheel steering chassis from a planar Twist."""
+
+import math
+
+from geometry_msgs.msg import TransformStamped, Twist
+from nav_msgs.msg import Odometry
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.time import Time
+from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray
+from tf2_ros import TransformBroadcaster
+
+
+CORNERS = ("front_left", "front_right", "rear_left", "rear_right")
+PERIOD = 0.02
+COMMAND_TIMEOUT = 0.35
+FEEDBACK_TIMEOUT = 0.25
+STEERING_RATE = 2.5
+STEERING_TOLERANCE = 0.12
+MAX_WHEEL_RATE = 6.0
+ZERO_TWIST = (0.0, 0.0, 0.0)
+
+
+class SwerveDrive(Node):
+    def __init__(self):
+        super().__init__("swerve_drive")
+        half_length = self.declare_parameter("wheelbase", Parameter.Type.DOUBLE).value / 2.0
+        half_track = self.declare_parameter("track", Parameter.Type.DOUBLE).value / 2.0
+        self.radius = self.declare_parameter("wheel_radius", Parameter.Type.DOUBLE).value
+        self.wheel_centers = (
+            (half_length, half_track),
+            (half_length, -half_track),
+            (-half_length, half_track),
+            (-half_length, -half_track),
+        )
+        self.yaw_denominator = sum(x * x + y * y for x, y in self.wheel_centers)
+
+        self.command = ZERO_TWIST
+        self.command_time = None
+        self.feedback_stamp = None
+        self.steering_positions = None
+        self.steering_targets = None
+        self.x = self.y = self.yaw = 0.0
+
+        self.steering_pub = self.create_publisher(
+            Float64MultiArray, "steering_controller/commands", 10
+        )
+        self.wheel_pub = self.create_publisher(
+            Float64MultiArray, "wheel_controller/commands", 10
+        )
+        self.odom_pub = self.create_publisher(Odometry, "odom", 10)
+        self.tf = TransformBroadcaster(self)
+        self.create_subscription(Twist, "cmd_vel", self.record_command, 10)
+        self.create_subscription(
+            JointState, "joint_states", self.record_feedback, qos_profile_sensor_data
+        )
+        self.create_timer(PERIOD, self.update_commands)
+
+    def record_command(self, message):
+        command = (message.linear.x, message.linear.y, message.angular.z)
+        if all(math.isfinite(value) for value in command):
+            self.command = command
+            self.command_time = self.get_clock().now()
+
+    def record_feedback(self, message):
+        positions = dict(zip(message.name, message.position))
+        velocities = dict(zip(message.name, message.velocity))
+        try:
+            steering = [positions[f"{corner}_steering_joint"] for corner in CORNERS]
+            rates = [velocities[f"{corner}_wheel_joint"] for corner in CORNERS]
+        except KeyError:
+            return
+        if not all(math.isfinite(value) for value in (*steering, *rates)):
+            return
+
+        self.steering_positions = steering
+        if self.steering_targets is None:
+            self.steering_targets = steering
+
+        # Fit a rigid planar velocity to the four measured rolling vectors.
+        vectors = [
+            (self.radius * rate * math.cos(angle), self.radius * rate * math.sin(angle))
+            for rate, angle in zip(rates, steering)
+        ]
+        vx = sum(ux for ux, _ in vectors) / len(vectors)
+        vy = sum(uy for _, uy in vectors) / len(vectors)
+        wz = sum(
+            x * uy - y * ux for (x, y), (ux, uy) in zip(self.wheel_centers, vectors)
+        ) / self.yaw_denominator
+        stamp = Time.from_msg(message.header.stamp)
+        if self.feedback_stamp is not None:
+            dt = (stamp - self.feedback_stamp).nanoseconds / 1e9
+            if 0.0 < dt <= FEEDBACK_TIMEOUT:
+                mid_yaw = self.yaw + 0.5 * wz * dt
+                self.x += (vx * math.cos(mid_yaw) - vy * math.sin(mid_yaw)) * dt
+                self.y += (vx * math.sin(mid_yaw) + vy * math.cos(mid_yaw)) * dt
+                self.yaw = math.remainder(self.yaw + wz * dt, math.tau)
+        self.feedback_stamp = stamp
+        self.publish_odometry(message.header.stamp, vx, vy, wz)
+
+    def publish_odometry(self, stamp, vx, vy, wz):
+        odom = Odometry()
+        odom.header.stamp = stamp
+        odom.header.frame_id = "odom"
+        odom.child_frame_id = "base_link"
+        odom.pose.pose.position.x = self.x
+        odom.pose.pose.position.y = self.y
+        odom.pose.pose.orientation.z = math.sin(self.yaw / 2.0)
+        odom.pose.pose.orientation.w = math.cos(self.yaw / 2.0)
+        odom.twist.twist.linear.x = vx
+        odom.twist.twist.linear.y = vy
+        odom.twist.twist.angular.z = wz
+        self.odom_pub.publish(odom)
+
+        transform = TransformStamped()
+        transform.header = odom.header
+        transform.child_frame_id = odom.child_frame_id
+        transform.transform.translation.x = self.x
+        transform.transform.translation.y = self.y
+        transform.transform.rotation = odom.pose.pose.orientation
+        self.tf.sendTransform(transform)
+
+    def is_recent(self, now, stamp, timeout):
+        return stamp is not None and -PERIOD <= (now - stamp).nanoseconds / 1e9 <= timeout
+
+    def update_commands(self):
+        if self.steering_positions is None:
+            return
+
+        now = self.get_clock().now()
+        command = ZERO_TWIST
+        if self.is_recent(now, self.command_time, COMMAND_TIMEOUT) and self.is_recent(
+            now, self.feedback_stamp, FEEDBACK_TIMEOUT
+        ):
+            command = self.command
+        rates = [0.0] * len(CORNERS)
+
+        if command != ZERO_TWIST:
+            vx, vy, wz = command
+            targets = []
+            alignment_errors = []
+            for index, (x, y) in enumerate(self.wheel_centers):
+                angle = self.steering_positions[index]
+                ux = vx - wz * y
+                uy = vy + wz * x
+                if math.hypot(ux, uy) < 1e-5:
+                    targets.append(angle)
+                    continue
+
+                # Choosing the closest axis also allows reversing the wheel.
+                delta = math.remainder(math.atan2(uy, ux) - angle, math.pi)
+                previous_target = self.steering_targets[index]
+                gap = angle + delta - previous_target
+                step = max(-STEERING_RATE * PERIOD, min(STEERING_RATE * PERIOD, gap))
+                targets.append(previous_target + step)
+                alignment_errors.append(abs(delta))
+                rates[index] = (ux * math.cos(angle) + uy * math.sin(angle)) / self.radius
+
+            self.steering_targets = targets
+            if any(error > STEERING_TOLERANCE for error in alignment_errors):
+                rates = [0.0] * len(CORNERS)
+
+        scale = max(1.0, max(map(abs, rates)) / MAX_WHEEL_RATE)
+        self.steering_pub.publish(Float64MultiArray(data=self.steering_targets))
+        self.wheel_pub.publish(Float64MultiArray(data=[rate / scale for rate in rates]))
+
+
+def main():
+    rclpy.init()
+    node = SwerveDrive()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

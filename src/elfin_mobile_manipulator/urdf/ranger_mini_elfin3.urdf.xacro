@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot name="ranger_mini_elfin3" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:include filename="$(find elfin_mobile_manipulator)/urdf/ranger_mini_base.xacro" />
+  <xacro:ranger_mini_base />
+  <xacro:include filename="$(find elfin_mobile_manipulator)/urdf/chassis_imu.xacro" />
+  <xacro:chassis_imu parent="base_link" />
+  <xacro:include filename="$(find elfin_mobile_manipulator)/urdf/gemini_336l_top_camera.xacro" />
+  <xacro:gemini_336l_top_camera parent="base_link" deck_height="${chassis.deck_height}" />
+  <xacro:include filename="$(find elfin3_ros2_gazebo)/urdf/elfin3.urdf.xacro" />
+</robot>

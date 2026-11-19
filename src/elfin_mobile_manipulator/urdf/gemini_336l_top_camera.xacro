@@ -1,0 +1,186 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:macro name="gemini_mast_box" params="name xyz size material rpy:='0 0 0'">
+    <visual name="${name}">
+      <origin xyz="${xyz}" rpy="${rpy}" />
+      <geometry><box size="${size}" /></geometry>
+      <material name="${material}" />
+    </visual>
+    <collision name="${name}">
+      <origin xyz="${xyz}" rpy="${rpy}" />
+      <geometry><box size="${size}" /></geometry>
+    </collision>
+  </xacro:macro>
+
+  <xacro:macro name="gemini_336l_top_camera" params="parent deck_height">
+    <!-- Height is measured at the optical center above the nominal ground plane. -->
+    <xacro:property name="optical_height" value="1.46" />
+    <xacro:property name="down_tilt" value="0.0" />
+    <xacro:property name="lens_above_deck" value="${optical_height - deck_height}" />
+    <xacro:property name="rear_lean" value="${-4 * pi / 180}" />
+    <xacro:property name="rail_half_spacing" value="0.153" />
+    <xacro:property name="tube_depth" value="0.03" />
+    <xacro:property name="tube_width" value="0.02" />
+    <xacro:property name="tube_wall" value="0.0015" />
+    <xacro:property name="foot_thickness" value="0.009" />
+    <xacro:property name="upper_beam_z" value="${lens_above_deck - 0.032}" />
+    <xacro:property name="lower_beam_z" value="0.122" />
+    <xacro:property name="beam_length" value="${2 * rail_half_spacing + tube_width}" />
+    <xacro:property name="post_rise" value="${upper_beam_z - foot_thickness}" />
+    <xacro:property name="post_length" value="${post_rise / cos(rear_lean)}" />
+    <xacro:property name="upper_beam_x" value="${post_rise * tan(rear_lean)}" />
+    <xacro:property name="lower_beam_x" value="${(lower_beam_z - foot_thickness) * tan(rear_lean)}" />
+    <xacro:property name="camera_mount_x" value="${upper_beam_x + 0.052}" />
+    <!-- In the vendor camera_link, the housing center is at Y = -47.5 mm.
+         The rear mounting face is at X = -22.92 mm. -->
+    <xacro:property name="camera_lateral_offset" value="0.0475" />
+    <xacro:property name="rear_face_offset" value="0.02292" />
+    <xacro:property name="rear_screw_half_spacing" value="0.0475" />
+    <xacro:property name="pad_depth" value="0.006" />
+    <xacro:property name="pad_width" value="0.016" />
+    <xacro:property name="pad_center_offset" value="${rear_face_offset + pad_depth / 2}" />
+    <xacro:property name="pad_x" value="${camera_mount_x - pad_center_offset * cos(down_tilt)}" />
+    <xacro:property name="pad_z" value="${lens_above_deck + pad_center_offset * sin(down_tilt)}" />
+    <xacro:property name="bracket_dx" value="${pad_x - pad_depth * cos(down_tilt) / 2 - upper_beam_x}" />
+    <xacro:property name="bracket_dz" value="${pad_z + pad_depth * sin(down_tilt) / 2 - upper_beam_z}" />
+    <xacro:property name="bracket_length" value="${sqrt(bracket_dx**2 + bracket_dz**2)}" />
+    <xacro:property name="bracket_angle" value="${atan2(bracket_dx, bracket_dz)}" />
+
+    <!-- Weigh the hollow tubes by their wall area, then locate the combined center of mass. -->
+    <xacro:property name="aluminum_density" value="2700.0" />
+    <xacro:property name="tube_area" value="${tube_depth * tube_width - (tube_depth - 2 * tube_wall) * (tube_width - 2 * tube_wall)}" />
+    <xacro:property name="posts_mass" value="${2 * aluminum_density * tube_area * post_length}" />
+    <xacro:property name="upper_mass" value="${aluminum_density * tube_area * beam_length}" />
+    <xacro:property name="lower_mass" value="${aluminum_density * beam_length * (0.021 * 0.017 - 0.018 * 0.014)}" />
+    <xacro:property name="feet_mass" value="${2 * aluminum_density * 0.100 * 0.058 * foot_thickness}" />
+    <xacro:property name="braces_mass" value="${2 * aluminum_density * 0.010 * 0.017 * 0.165}" />
+    <xacro:property name="pads_mass" value="${2 * aluminum_density * pad_depth * pad_width**2}" />
+    <xacro:property name="supports_mass" value="${2 * aluminum_density * 0.012 * pad_width * bracket_length}" />
+    <xacro:property name="bracket_mass" value="${pads_mass + supports_mass}" />
+    <xacro:property name="bracket_x" value="${(pads_mass * pad_x + supports_mass * (upper_beam_x + bracket_dx / 2)) / bracket_mass}" />
+    <xacro:property name="bracket_z" value="${(pads_mass * pad_z + supports_mass * (upper_beam_z + bracket_dz / 2)) / bracket_mass}" />
+    <xacro:property name="mast_mass" value="${posts_mass + upper_mass + lower_mass + feet_mass + braces_mass + bracket_mass}" />
+    <xacro:property name="mast_com_x" value="${(posts_mass * upper_beam_x / 2 + upper_mass * upper_beam_x + lower_mass * lower_beam_x + feet_mass * 0.016 + braces_mass * 0.026 + bracket_mass * bracket_x) / mast_mass}" />
+    <xacro:property name="mast_com_z" value="${(posts_mass * (foot_thickness + post_rise / 2) + upper_mass * upper_beam_z + lower_mass * lower_beam_z + feet_mass * foot_thickness / 2 + braces_mass * 0.085 + bracket_mass * bracket_z) / mast_mass}" />
+    <xacro:property name="inertia_span_x" value="${0.100 + fabs(upper_beam_x)}" />
+    <xacro:property name="lateral_variance" value="${((posts_mass + feet_mass + braces_mass) * rail_half_spacing**2 + (upper_mass + lower_mass) * beam_length**2 / 12 + bracket_mass * rear_screw_half_spacing**2) / mast_mass}" />
+
+    <xacro:property name="housing_width" value="0.124" />
+    <xacro:property name="housing_height" value="0.029" />
+    <xacro:property name="housing_depth" value="0.0277" />
+    <xacro:property name="housing_mass" value="0.135" />
+    <!-- Estimate inertia from the published envelope and 135 g mass. -->
+    <xacro:property name="housing_center_x" value="${housing_depth / 2 - rear_face_offset}" />
+    <xacro:property name="cad_xyz" value="0.00408 ${-camera_lateral_offset} 0" />
+    <xacro:property name="cad_rpy" value="${pi / 2} 0 ${pi / 2}" />
+    <xacro:property name="cad_mesh_dir" value="file://$(find elfin_mobile_manipulator)/meshes" />
+    <xacro:property name="near_depth" value="0.17" />
+    <xacro:property name="far_depth" value="6.0" />
+
+    <material name="gemini_aluminum"><color rgba="0.57 0.62 0.66 1" /></material>
+    <material name="gemini_bracket"><color rgba="0.22 0.26 0.30 1" /></material>
+    <material name="gemini_housing"><color rgba="0.065 0.084 0.10 1" /></material>
+
+    <xacro:macro name="gemini_mast_side" params="side y">
+      <xacro:gemini_mast_box name="${side}_foot" xyz="0.016 ${y} ${foot_thickness / 2}"
+                            size="0.100 0.058 ${foot_thickness}" material="gemini_bracket" />
+      <xacro:gemini_mast_box name="${side}_upright" xyz="${upper_beam_x / 2} ${y} ${foot_thickness + post_rise / 2}"
+                            size="${tube_depth} ${tube_width} ${post_length}" rpy="0 ${rear_lean} 0"
+                            material="gemini_aluminum" />
+      <xacro:gemini_mast_box name="${side}_brace" xyz="0.026 ${y} 0.085" size="0.010 0.017 0.165"
+                            rpy="0 -0.36 0" material="gemini_aluminum" />
+    </xacro:macro>
+
+    <xacro:macro name="gemini_rear_mount" params="side y">
+      <xacro:gemini_mast_box name="${side}_camera_pad" xyz="${pad_x} ${y} ${pad_z}"
+                            size="${pad_depth} ${pad_width} ${pad_width}"
+                            rpy="0 ${down_tilt} 0" material="gemini_bracket" />
+      <xacro:gemini_mast_box name="${side}_camera_support"
+                            xyz="${upper_beam_x + bracket_dx / 2} ${y} ${upper_beam_z + bracket_dz / 2}"
+                            size="0.012 ${pad_width} ${bracket_length}"
+                            rpy="0 ${bracket_angle} 0" material="gemini_bracket" />
+    </xacro:macro>
+
+    <joint name="gemini_336l_mast_fixed" type="fixed">
+      <parent link="${parent}" />
+      <child link="gemini_336l_mast_link" />
+      <origin xyz="-0.260 0 ${deck_height}" />
+    </joint>
+    <link name="gemini_336l_mast_link">
+      <inertial>
+        <origin xyz="${mast_com_x} 0 ${mast_com_z}" />
+        <mass value="${mast_mass}" />
+        <inertia ixx="${mast_mass * (post_rise**2 / 12 + lateral_variance)}"
+                 iyy="${mast_mass * (post_rise**2 + inertia_span_x**2) / 12}"
+                 izz="${mast_mass * (inertia_span_x**2 / 12 + lateral_variance)}" ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <xacro:gemini_mast_side side="left" y="${rail_half_spacing}" />
+      <xacro:gemini_mast_side side="right" y="${-rail_half_spacing}" />
+      <xacro:gemini_mast_box name="upper_crossbar" xyz="${upper_beam_x} 0 ${upper_beam_z}"
+                            size="${tube_depth} ${beam_length} ${tube_width}"
+                            material="gemini_aluminum" />
+      <xacro:gemini_mast_box name="lower_crossbar" xyz="${lower_beam_x} 0 ${lower_beam_z}"
+                            size="0.021 ${beam_length} 0.017" material="gemini_aluminum" />
+      <xacro:gemini_rear_mount side="left" y="${rear_screw_half_spacing}" />
+      <xacro:gemini_rear_mount side="right" y="${-rear_screw_half_spacing}" />
+    </link>
+
+    <joint name="camera_mount_joint" type="fixed">
+      <parent link="gemini_336l_mast_link" />
+      <child link="camera_link" />
+      <origin xyz="${camera_mount_x} ${camera_lateral_offset} ${lens_above_deck}" rpy="0 ${down_tilt} 0" />
+    </joint>
+    <link name="camera_link">
+      <inertial>
+        <origin xyz="${housing_center_x} ${-camera_lateral_offset} 0" />
+        <mass value="${housing_mass}" />
+        <inertia ixx="${housing_mass * (housing_width**2 + housing_height**2) / 12}"
+                 iyy="${housing_mass * (housing_depth**2 + housing_height**2) / 12}"
+                 izz="${housing_mass * (housing_depth**2 + housing_width**2) / 12}"
+                 ixy="0" ixz="0" iyz="0" />
+      </inertial>
+      <!-- Convert the original STEP axes and millimeters to the ROS link. -->
+      <visual>
+        <origin xyz="${cad_xyz}" rpy="${cad_rpy}" />
+        <geometry>
+          <mesh filename="${cad_mesh_dir}/gemini_336l_assembly.stl" scale="0.001 0.001 0.001" />
+        </geometry>
+        <material name="gemini_housing" />
+      </visual>
+      <collision>
+        <origin xyz="${cad_xyz}" rpy="${cad_rpy}" />
+        <geometry>
+          <mesh filename="${cad_mesh_dir}/gemini_336l_housing_collision.stl" scale="0.001 0.001 0.001" />
+        </geometry>
+      </collision>
+    </link>
+
+    <gazebo reference="camera_link">
+      <material>Gazebo/DarkGrey</material>
+    </gazebo>
+    <gazebo reference="camera_color_frame">
+      <!-- The aligned simulated streams share the vendor color frame origin. -->
+      <sensor name="gemini_336l_rgbd" type="depth">
+        <always_on>true</always_on>
+        <update_rate>15</update_rate>
+        <visualize>false</visualize>
+        <camera>
+          <horizontal_fov>${pi / 2}</horizontal_fov>
+          <image><width>640</width><height>400</height><format>R8G8B8</format></image>
+          <clip><near>${near_depth}</near><far>${far_depth}</far></clip>
+        </camera>
+        <plugin name="gemini_336l_ros_camera" filename="libgazebo_ros_camera.so">
+          <ros>
+            <remapping>camera/image_raw:=camera/color/image_raw</remapping>
+            <remapping>camera/camera_info:=camera/color/camera_info</remapping>
+            <remapping>camera/points:=camera/depth/points</remapping>
+          </ros>
+          <camera_name>camera</camera_name>
+          <frame_name>camera_color_optical_frame</frame_name>
+          <min_depth>${near_depth}</min_depth>
+          <max_depth>${far_depth}</max_depth>
+        </plugin>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+</robot>

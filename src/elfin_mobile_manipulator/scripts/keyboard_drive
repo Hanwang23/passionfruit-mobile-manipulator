@@ -1,0 +1,101 @@
+#!/usr/bin/python3
+"""Publish chassis velocity commands from an interactive terminal."""
+
+import os
+import select
+import sys
+import termios
+import time
+import tty
+
+from geometry_msgs.msg import Twist, Vector3
+import rclpy
+from rclpy.duration import Duration
+from rclpy.signals import SignalHandlerOptions
+
+
+LINEAR_SPEED = 0.15
+TURN_SPEED = 0.45
+PUBLISH_PERIOD = 0.05
+KEY_TIMEOUT = 0.65
+COMMANDS = {
+    b"w": Twist(linear=Vector3(x=LINEAR_SPEED)),
+    b"s": Twist(linear=Vector3(x=-LINEAR_SPEED)),
+    b"a": Twist(linear=Vector3(y=LINEAR_SPEED)),
+    b"d": Twist(linear=Vector3(y=-LINEAR_SPEED)),
+    b"q": Twist(angular=Vector3(z=TURN_SPEED)),
+    b"e": Twist(angular=Vector3(z=-TURN_SPEED)),
+}
+
+
+def drive(publisher, terminal):
+    active = None
+    deadline = next_publish = 0.0
+
+    while rclpy.ok():
+        readable, _, _ = select.select([terminal], [], [], PUBLISH_PERIOD)
+        now = time.monotonic()
+        if readable:
+            key = os.read(terminal, 1)
+            if not key:
+                return
+            if key == b" ":
+                active = None
+                publisher.publish(Twist())
+            elif key in COMMANDS:
+                command = COMMANDS[key]
+                if command is not active:
+                    active = command
+                    next_publish = now
+                # Terminals report repeated presses but provide no key-up event.
+                deadline = now + KEY_TIMEOUT
+
+        if active is None:
+            continue
+        if now >= deadline:
+            active = None
+            publisher.publish(Twist())
+        elif now >= next_publish:
+            publisher.publish(active)
+            next_publish = now + PUBLISH_PERIOD
+
+
+def main():
+    if not sys.stdin.isatty():
+        sys.exit("请在交互终端中启动键盘控制。")
+
+    terminal = sys.stdin.fileno()
+    settings = termios.tcgetattr(terminal)
+    # Let Ctrl+C stop the chassis before shutting down the ROS publisher.
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
+    node = rclpy.create_node("mobile_keyboard_drive")
+    publisher = node.create_publisher(Twist, "cmd_vel", 5)
+
+    print(
+        "Ranger Mini 3.0 底盘键盘控制\n"
+        "长按小写键移动\n"
+        "  w / s   前进 / 后退\n"
+        "  a / d   向左 / 向右横移\n"
+        "  q / e   向左 / 向右原地转向\n"
+        "  空格    立即发送停车指令\n"
+        "  Ctrl+C  停车并退出\n"
+        f"松键后约 {KEY_TIMEOUT:g} 秒发送停车指令。",
+        flush=True,
+    )
+    try:
+        tty.setcbreak(terminal)
+        drive(publisher, terminal)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            publisher.publish(Twist())
+            publisher.wait_for_all_acked(Duration(seconds=0.15))
+        finally:
+            termios.tcsetattr(terminal, termios.TCSAFLUSH, settings)
+            node.destroy_node()
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()

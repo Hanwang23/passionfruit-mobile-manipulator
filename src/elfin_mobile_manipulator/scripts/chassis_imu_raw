@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""Expose the simulated accelerometer and gyroscope as a raw six-axis IMU."""
+
+from geometry_msgs.msg import Quaternion
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Imu
+
+
+class RawImuPublisher(Node):
+    def __init__(self):
+        super().__init__("chassis_imu_raw")
+        self.raw = self.create_publisher(Imu, "imu/data_raw", qos_profile_sensor_data)
+        self.create_subscription(Imu, "simulation/chassis_imu", self.publish_raw, qos_profile_sensor_data)
+
+    def publish_raw(self, message):
+        # Gazebo supplies a world orientation. A raw six-axis sensor has no such estimate.
+        message.orientation = Quaternion(w=1.0)
+        message.orientation_covariance[0] = -1.0
+        self.raw.publish(message)
+
+
+def main():
+    rclpy.init()
+    node = RawImuPublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
+
+
+if __name__ == "__main__":
+    main()

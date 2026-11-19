@@ -1,0 +1,10 @@
+# Chassis envelope, wheelbase, track and total chassis mass from the Ranger Mini 3.0
+# product sheet. Tire dimensions and the mass distribution are simulation estimates.
+length: 0.720
+width: 0.500
+deck_height: 0.345
+mass: 73.0
+wheelbase: 0.494
+track: 0.370
+wheel_radius: 0.100
+wheel_width: 0.095
